@@ -2,7 +2,7 @@ name: sync
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes
+    - cron: "7,37 * * * *"   # twice an hour at odd minutes (less crowded than :00 and :30)
   workflow_dispatch:
     inputs:
       dry_run:
