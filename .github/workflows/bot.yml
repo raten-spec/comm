@@ -8,6 +8,9 @@ on:
       dry_run:
         description: "Simulation only (true) or live (false)"
         default: "true"
+      test_any:
+        description: "Simulation only: ignore beneficiary filter to preview comments"
+        default: "false"
 
 permissions:
   contents: write
@@ -29,6 +32,7 @@ jobs:
         env:
           # scheduled runs stay in simulation until you set the repo variable DRY_RUN=false
           DRY_RUN: ${{ github.event.inputs.dry_run || vars.DRY_RUN || 'true' }}
+          TEST_ANY: ${{ github.event.inputs.test_any || 'false' }}
           HIVE_ACCOUNT: ${{ secrets.HIVE_ACCOUNT }}
           HIVE_POSTING_KEY: ${{ secrets.HIVE_POSTING_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
