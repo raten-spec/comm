@@ -1,11 +1,6 @@
 """
-Hive CommentRewarder bot.
+H bot.
 
-Scans the newest posts, picks the ones (<= 24h old) that list
-`commentrewarder` as a beneficiary, upvotes them and leaves a short,
-post-specific comment. The same author is skipped for 3 days.
-
-DRY_RUN=true (default) simulates everything: nothing is voted or posted.
 """
 import hashlib
 import hmac
