@@ -40,6 +40,8 @@ jobs:
           VOTE_WEIGHT: ${{ vars.VOTE_WEIGHT || '100' }}
           MAX_PER_RUN: ${{ vars.MAX_PER_RUN || '1' }}
           MAX_PER_DAY: ${{ vars.MAX_PER_DAY || '10' }}
+          HISTORY_SALT: ${{ secrets.HISTORY_SALT }}
+          QUIET_LOGS: ${{ vars.QUIET_LOGS }}
           BLACKLIST: ${{ secrets.BLACKLIST }}
           HIVE_ACCOUNT: ${{ secrets.HIVE_ACCOUNT }}
           HIVE_POSTING_KEY: ${{ secrets.HIVE_POSTING_KEY }}
