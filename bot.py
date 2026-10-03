@@ -1,7 +1,4 @@
-"""
-H bot.
-
-"""
+"""Sync script."""
 import hashlib
 import hmac
 import json
@@ -15,7 +12,7 @@ from pathlib import Path
 import requests
 
 API = "https://api.hive.blog"
-BENEFICIARY = "commentrewarder"
+BENEFICIARY = os.getenv("BENEFICIARY", "").strip().lstrip("@").lower()
 MAX_POST_AGE = timedelta(hours=24)
 AUTHOR_COOLDOWN = timedelta(days=3)
 HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "history.json"))
@@ -47,18 +44,10 @@ SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "300"))
 # simulation only: skip the beneficiary filter to preview generated comments
 TEST_ANY = DRY_RUN and os.getenv("TEST_ANY", "false").lower() == "true"
 
-SYSTEM_PROMPT = """You write short, friendly comments on Hive blog posts, like a regular reader chatting with the author.
-Rules:
-- English, relaxed and conversational. Use contractions (it's, that's, I'm, you're).
-- 2 to 3 short sentences at most. Shorter is fine.
-- Talk to the author directly (you/your) and react to one specific detail from the post.
-- Vary how you start. Never open with "You raise", "It is impressive", "Great post", "I appreciate" or "Thanks for sharing".
-- Sound like a person, not a press release. Plain words, no corporate or flowery phrasing.
-- Never use @mentions or usernames, the comment is already a direct reply to the author.
-- Never use em dashes or en dashes.
-- Never use the Oxford comma.
-- No hashtags, no links, no emojis, no questions that ask for follow or votes.
-Return only the comment text."""
+SYSTEM_PROMPT = os.getenv("COMMENT_PROMPT") or (
+    "Write a short, friendly English comment (2 sentences) about the post. "
+    "No @mentions, no dashes, no emojis. Return only the comment."
+)
 
 STYLE_HINTS = [
     "Start with a quick reaction to a detail from the post.",
@@ -161,7 +150,7 @@ def eligible(post, history, now):
     if now - created > MAX_POST_AGE:
         return False, "older than 24h"
     if not TEST_ANY and not has_beneficiary(post):
-        return False, "no commentrewarder beneficiary"
+        return False, "filtered"
     author = post["author"]
     if author.lower() in BLACKLIST:
         return False, "blacklisted"
@@ -246,6 +235,10 @@ def main():
 
     if not DRY_RUN and not (ACCOUNT and POSTING_KEY):
         raise SystemExit("HIVE_ACCOUNT and HIVE_POSTING_KEY are required in live mode")
+    if not BENEFICIARY:
+        raise SystemExit("BENEFICIARY is required")
+    if not DRY_RUN and not os.getenv("COMMENT_PROMPT"):
+        raise SystemExit("COMMENT_PROMPT is required in live mode")
     if not DRY_RUN and not HISTORY_SALT:
         raise SystemExit("HISTORY_SALT is required in live mode")
     if not DRY_RUN and not GEMINI_KEY:
@@ -270,7 +263,7 @@ def main():
         if not ok:
             if reason == "blacklisted":
                 blocked += 1
-            elif reason != "no commentrewarder beneficiary":
+            elif reason != "filtered":
                 if not QUIET:
                     print(f"  skip {tag}: {reason}")
                 else:
@@ -315,7 +308,7 @@ def main():
         if done >= MAX_PER_RUN or (not DRY_RUN and already + done >= MAX_PER_DAY):
             break
 
-    print(f"\n{no_benef} posts skipped (no commentrewarder beneficiary)")
+    print(f"\n{no_benef} posts skipped (filter)")
     print(f"{other_skips} posts skipped (other reasons)")
     print(f"{blocked} posts skipped (blacklist, {len(BLACKLIST)} names loaded)")
     print(f"finished: {done} action(s) {'simulated' if DRY_RUN else 'executed'}")
