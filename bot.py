@@ -35,8 +35,9 @@ MODELS = [m for m in [
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
 ] if m]
-VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "20"))      # percent
-MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "3"))
+VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "100"))      # percent
+MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "1"))
+MAX_PER_DAY = int(os.getenv("MAX_PER_DAY", "10"))  # UTC day, keeps voting power healthy
 # comma separated usernames kept in a GitHub secret, never printed to logs
 BLACKLIST = {n.strip().lstrip("@").lower()
              for n in os.getenv("BLACKLIST", "").split(",") if n.strip()}
@@ -89,6 +90,11 @@ def load_history():
     if HISTORY_FILE.exists():
         return json.loads(HISTORY_FILE.read_text())
     return {}
+
+
+def actions_today(history, now):
+    today = now.strftime("%Y-%m-%d")
+    return sum(1 for ts in history.values() if ts.startswith(today))
 
 
 def save_history(h):
@@ -217,6 +223,10 @@ def main():
     posts = fetch_recent_posts()
     print(f"scanned {len(posts)} new posts")
 
+    already = actions_today(history, now)
+    if not DRY_RUN and already >= MAX_PER_DAY:
+        print(f"daily limit reached ({already}/{MAX_PER_DAY}), stopping")
+        return
     done = 0
     no_benef = 0
     blocked = 0
@@ -252,7 +262,7 @@ def main():
             time.sleep(20)  # Hive allows one comment every 3 seconds; stay well above it
 
         done += 1
-        if done >= MAX_PER_RUN:
+        if done >= MAX_PER_RUN or (not DRY_RUN and already + done >= MAX_PER_DAY):
             break
 
     print(f"\n{no_benef} posts skipped (no commentrewarder beneficiary)")
