@@ -33,6 +33,7 @@ jobs:
           # scheduled runs stay in simulation until you set the repo variable DRY_RUN=false
           DRY_RUN: ${{ github.event.inputs.dry_run || vars.DRY_RUN || 'true' }}
           TEST_ANY: ${{ github.event.inputs.test_any || 'false' }}
+          BLACKLIST: ${{ secrets.BLACKLIST }}
           HIVE_ACCOUNT: ${{ secrets.HIVE_ACCOUNT }}
           HIVE_POSTING_KEY: ${{ secrets.HIVE_POSTING_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
