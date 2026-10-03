@@ -98,9 +98,12 @@ def author_key(author):
 
 
 def load_history():
-    if HISTORY_FILE.exists():
-        return json.loads(HISTORY_FILE.read_text())
-    return {}
+    """Load history; plain usernames from older versions are converted to salted hashes."""
+    if not HISTORY_FILE.exists():
+        return {}
+    raw = json.loads(HISTORY_FILE.read_text())
+    return {(k if re.fullmatch(r"[0-9a-f]{16}", k) else author_key(k)): v
+            for k, v in raw.items()}
 
 
 def actions_today(history, now):
@@ -253,6 +256,8 @@ def main():
     if not DRY_RUN and not GEMINI_KEY:
         raise SystemExit("GEMINI_API_KEY is required in live mode")
 
+    if not DRY_RUN:
+        save_history(history)  # rewrites any old plain-name entries as hashes
     posts = fetch_recent_posts()
     print(f"scanned {len(posts)} new posts")
 
