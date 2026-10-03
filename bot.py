@@ -7,6 +7,8 @@ post-specific comment. The same author is skipped for 3 days.
 
 DRY_RUN=true (default) simulates everything: nothing is voted or posted.
 """
+import hashlib
+import hmac
 import json
 import os
 import random
@@ -41,6 +43,11 @@ MAX_PER_DAY = int(os.getenv("MAX_PER_DAY", "10"))  # UTC day, keeps voting power
 # comma separated usernames kept in a GitHub secret, never printed to logs
 BLACKLIST = {n.strip().lstrip("@").lower()
              for n in os.getenv("BLACKLIST", "").split(",") if n.strip()}
+# secret salt: author names are stored only as salted hashes in history.json
+HISTORY_SALT = os.getenv("HISTORY_SALT", "")
+# quiet logs hide usernames, post links and comment text (default: on in live mode)
+_q = os.getenv("QUIET_LOGS", "").lower()
+QUIET = (_q == "true") if _q else (not DRY_RUN)
 SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "300"))
 # simulation only: skip the beneficiary filter to preview generated comments
 TEST_ANY = DRY_RUN and os.getenv("TEST_ANY", "false").lower() == "true"
@@ -84,6 +91,10 @@ def rpc(method, params):
 
 def parse_time(s):
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+
+
+def author_key(author):
+    return hmac.new(HISTORY_SALT.encode(), author.lower().encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def load_history():
@@ -156,7 +167,7 @@ def eligible(post, history, now):
     author = post["author"]
     if author.lower() in BLACKLIST:
         return False, "blacklisted"
-    last = history.get(author)
+    last = history.get(author_key(author))
     if last and now - parse_time(last) < AUTHOR_COOLDOWN:
         return False, "author on 3 day cooldown"
     if ACCOUNT and any(v.get("voter") == ACCOUNT for v in post.get("active_votes", [])):
@@ -237,6 +248,8 @@ def main():
 
     if not DRY_RUN and not (ACCOUNT and POSTING_KEY):
         raise SystemExit("HIVE_ACCOUNT and HIVE_POSTING_KEY are required in live mode")
+    if not DRY_RUN and not HISTORY_SALT:
+        raise SystemExit("HISTORY_SALT is required in live mode")
     if not DRY_RUN and not GEMINI_KEY:
         raise SystemExit("GEMINI_API_KEY is required in live mode")
 
@@ -250,6 +263,7 @@ def main():
     done = 0
     no_benef = 0
     blocked = 0
+    other_skips = 0
     for post in posts:
         ok, reason = eligible(post, history, now)
         tag = f"@{post['author']}/{post['permlink']}"
@@ -257,7 +271,10 @@ def main():
             if reason == "blacklisted":
                 blocked += 1
             elif reason != "no commentrewarder beneficiary":
-                print(f"  skip {tag}: {reason}")
+                if not QUIET:
+                    print(f"  skip {tag}: {reason}")
+                else:
+                    other_skips += 1
             else:
                 no_benef += 1
             continue
@@ -265,15 +282,18 @@ def main():
         try:
             comment = generate_comment(post)
         except requests.RequestException as e:
-            print(f"  skip {tag}: comment generation failed ({e})")
+            print("  skip: comment generation failed" if QUIET else f"  skip {tag}: comment generation failed ({e})")
             continue
         if not comment or (not DRY_RUN and not looks_valid(comment)):
-            print(f"  skip {tag}: no valid comment generated")
+            print("  skip: no valid comment generated" if QUIET else f"  skip {tag}: no valid comment generated")
             continue
-        print(f"\n  MATCH {tag}")
-        print(f"  title: {post.get('title')}")
-        print(f"  would vote: {VOTE_WEIGHT}%")
-        print(f"  would comment: {comment}\n")
+        if QUIET:
+            print("\n  MATCH found (details hidden, quiet logs)")
+        else:
+            print(f"\n  MATCH {tag}")
+            print(f"  title: {post.get('title')}")
+            print(f"  would vote: {VOTE_WEIGHT}%")
+            print(f"  would comment: {comment}\n")
 
         if not DRY_RUN:
             hive = get_hive()
@@ -283,7 +303,7 @@ def main():
                 print(f"  comment failed, skipping this post ({type(e).__name__})")
                 continue
             # record right after the comment so this author is never commented twice
-            history[post["author"]] = now.strftime("%Y-%m-%dT%H:%M:%S")
+            history[author_key(post["author"])] = now.strftime("%Y-%m-%dT%H:%M:%S")
             save_history(history)
             try:
                 cast_vote(hive, post)
@@ -296,6 +316,7 @@ def main():
             break
 
     print(f"\n{no_benef} posts skipped (no commentrewarder beneficiary)")
+    print(f"{other_skips} posts skipped (other reasons)")
     print(f"{blocked} posts skipped (blacklist, {len(BLACKLIST)} names loaded)")
     print(f"finished: {done} action(s) {'simulated' if DRY_RUN else 'executed'}")
 
