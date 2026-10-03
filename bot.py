@@ -25,8 +25,9 @@ HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "history.json"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() != "false"
 ACCOUNT = os.getenv("HIVE_ACCOUNT", "")
 POSTING_KEY = os.getenv("HIVE_POSTING_KEY", "")
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+# free tier model; change via env if Google renames or retires it
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "20"))      # percent
 MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "3"))
 SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "50"))
@@ -35,7 +36,8 @@ SYSTEM_PROMPT = """You write short comments on Hive blog posts.
 Rules:
 - Write in English, in a warm and friendly tone.
 - 2 to 3 short sentences at most.
-- Address the author directly and mention something specific from the post.
+- Talk to the author directly (you/your) and mention something specific from the post.
+- Never use @mentions or usernames, the comment is already a direct reply to the author.
 - Never use em dashes or en dashes.
 - Never use the Oxford comma.
 - No hashtags, no links, no emojis, no generic praise like "great post".
@@ -72,6 +74,7 @@ def save_history(h):
 
 def clean_comment(text):
     text = text.replace("\u2014", ", ").replace("\u2013", ", ").replace(" - ", ", ")
+    text = re.sub(r"@[\w.-]+[,:]?\s*", "", text)  # safety net: no @mentions
     text = re.sub(r"\s+", " ", text).strip().strip('"')
     return text
 
@@ -126,30 +129,31 @@ def generate_comment(post):
     body = post.get("body", "")[:4000]
     author = post["author"]
 
-    if not ANTHROPIC_KEY:
-        return f"[placeholder] @{author}, set ANTHROPIC_API_KEY to generate a real comment about \"{title}\"."
+    if not GEMINI_KEY:
+        return f"[placeholder] set GEMINI_API_KEY to generate a real comment about \"{title}\"."
 
-    resp = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": MODEL,
-            "max_tokens": 200,
-            "system": SYSTEM_PROMPT,
-            "messages": [{
-                "role": "user",
-                "content": f"Author: @{author}\nTitle: {title}\n\nPost:\n{body}",
-            }],
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
-    text = "".join(b.get("text", "") for b in resp.json()["content"])
-    return clean_comment(text)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+    payload = {
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": f"Author: {author}\nTitle: {title}\n\nPost:\n{body}"}],
+        }],
+        "generationConfig": {"maxOutputTokens": 200, "temperature": 0.9},
+    }
+    for attempt in range(2):
+        resp = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY},
+                             json=payload, timeout=60)
+        if resp.status_code == 429:  # free tier rate limit
+            time.sleep(30)
+            continue
+        resp.raise_for_status()
+        try:
+            parts = resp.json()["candidates"][0]["content"]["parts"]
+        except (KeyError, IndexError):
+            return None  # blocked or empty response
+        return clean_comment("".join(p.get("text", "") for p in parts))
+    return None
 
 
 # ---------- live actions ----------
@@ -185,7 +189,14 @@ def main():
             print(f"  skip {tag}: {reason}")
             continue
 
-        comment = generate_comment(post)
+        try:
+            comment = generate_comment(post)
+        except requests.RequestException as e:
+            print(f"  skip {tag}: comment generation failed ({e})")
+            continue
+        if not comment:
+            print(f"  skip {tag}: no comment generated (rate limit or empty)")
+            continue
         print(f"\n  MATCH {tag}")
         print(f"  title: {post.get('title')}")
         print(f"  would vote: {VOTE_WEIGHT}%")
