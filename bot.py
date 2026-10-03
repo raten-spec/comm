@@ -9,6 +9,7 @@ DRY_RUN=true (default) simulates everything: nothing is voted or posted.
 """
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -36,20 +37,34 @@ MODELS = [m for m in [
 ] if m]
 VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "20"))      # percent
 MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "3"))
+# comma separated usernames kept in a GitHub secret, never printed to logs
+BLACKLIST = {n.strip().lstrip("@").lower()
+             for n in os.getenv("BLACKLIST", "").split(",") if n.strip()}
 SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "300"))
 # simulation only: skip the beneficiary filter to preview generated comments
 TEST_ANY = DRY_RUN and os.getenv("TEST_ANY", "false").lower() == "true"
 
-SYSTEM_PROMPT = """You write short comments on Hive blog posts.
+SYSTEM_PROMPT = """You write short, friendly comments on Hive blog posts, like a regular reader chatting with the author.
 Rules:
-- Write in English, in a warm and friendly tone.
-- 2 to 3 short sentences at most.
-- Talk to the author directly (you/your) and mention something specific from the post.
+- English, relaxed and conversational. Use contractions (it's, that's, I'm, you're).
+- 2 to 3 short sentences at most. Shorter is fine.
+- Talk to the author directly (you/your) and react to one specific detail from the post.
+- Vary how you start. Never open with "You raise", "It is impressive", "Great post", "I appreciate" or "Thanks for sharing".
+- Sound like a person, not a press release. Plain words, no corporate or flowery phrasing.
 - Never use @mentions or usernames, the comment is already a direct reply to the author.
 - Never use em dashes or en dashes.
 - Never use the Oxford comma.
-- No hashtags, no links, no emojis, no generic praise like "great post".
+- No hashtags, no links, no emojis, no questions that ask for follow or votes.
 Return only the comment text."""
+
+STYLE_HINTS = [
+    "Start with a quick reaction to a detail from the post.",
+    "Start with something you relate to from the post.",
+    "Start with a short compliment about one specific part.",
+    "Start by mentioning what stood out to you most.",
+    "End with a light, genuine question about the post's topic.",
+    "Keep it to two very short sentences.",
+]
 
 
 # ---------- helpers ----------
@@ -84,7 +99,8 @@ def clean_comment(text):
     text = text.replace("\u2014", ", ").replace("\u2013", ", ").replace(" - ", ", ")
     text = re.sub(r"@[\w.-]+[,:]?\s*", "", text)  # safety net: no @mentions
     text = re.sub(r"\s+", " ", text).strip().strip('"')
-    return text
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(sentences[:3])
 
 
 # ---------- scanning ----------
@@ -123,6 +139,8 @@ def eligible(post, history, now):
     if not TEST_ANY and not has_beneficiary(post):
         return False, "no commentrewarder beneficiary"
     author = post["author"]
+    if author.lower() in BLACKLIST:
+        return False, "blacklisted"
     last = history.get(author)
     if last and now - parse_time(last) < AUTHOR_COOLDOWN:
         return False, "author on 3 day cooldown"
@@ -144,7 +162,7 @@ def generate_comment(post):
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [{
             "role": "user",
-            "parts": [{"text": f"Author: {author}\nTitle: {title}\n\nPost:\n{body}"}],
+            "parts": [{"text": f"Style hint: {random.choice(STYLE_HINTS)}\n\nTitle: {title}\n\nPost:\n{body}"}],
         }],
         "generationConfig": {"maxOutputTokens": 200, "temperature": 0.9},
     }
@@ -201,11 +219,14 @@ def main():
 
     done = 0
     no_benef = 0
+    blocked = 0
     for post in posts:
         ok, reason = eligible(post, history, now)
         tag = f"@{post['author']}/{post['permlink']}"
         if not ok:
-            if reason != "no commentrewarder beneficiary":
+            if reason == "blacklisted":
+                blocked += 1
+            elif reason != "no commentrewarder beneficiary":
                 print(f"  skip {tag}: {reason}")
             else:
                 no_benef += 1
@@ -235,6 +256,7 @@ def main():
             break
 
     print(f"\n{no_benef} posts skipped (no commentrewarder beneficiary)")
+    print(f"{blocked} posts skipped (blacklist, {len(BLACKLIST)} names loaded)")
     print(f"finished: {done} action(s) {'simulated' if DRY_RUN else 'executed'}")
 
 
