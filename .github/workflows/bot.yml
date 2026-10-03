@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Simulation only (true) or live (false)"
-        default: "true"
+        description: "true or false. Leave empty to use the DRY_RUN variable"
+        default: ""
       test_any:
         description: "Simulation only: ignore beneficiary filter to preview comments"
         default: "false"
