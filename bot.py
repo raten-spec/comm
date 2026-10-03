@@ -26,8 +26,14 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() != "false"
 ACCOUNT = os.getenv("HIVE_ACCOUNT", "")
 POSTING_KEY = os.getenv("HIVE_POSTING_KEY", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-# free tier model; change via env if Google renames or retires it
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+# Models are tried in order; a 404 (retired/renamed model) moves on to the next one.
+# Override the first choice with the GEMINI_MODEL env var.
+MODELS = [m for m in [
+    os.getenv("GEMINI_MODEL", ""),
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+] if m]
 VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "20"))      # percent
 MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "3"))
 SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "50"))
@@ -132,7 +138,6 @@ def generate_comment(post):
     if not GEMINI_KEY:
         return f"[placeholder] set GEMINI_API_KEY to generate a real comment about \"{title}\"."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
     payload = {
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [{
@@ -141,18 +146,29 @@ def generate_comment(post):
         }],
         "generationConfig": {"maxOutputTokens": 200, "temperature": 0.9},
     }
-    for attempt in range(2):
-        resp = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY},
-                             json=payload, timeout=60)
-        if resp.status_code == 429:  # free tier rate limit
-            time.sleep(30)
+    for model in MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        for attempt in range(2):
+            resp = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY},
+                                 json=payload, timeout=60)
+            if resp.status_code == 429:  # free tier rate limit, wait and retry once
+                time.sleep(30)
+                continue
+            break
+        if resp.status_code in (404, 400, 403):
+            print(f"  model {model} unavailable ({resp.status_code}), trying next")
             continue
+        if resp.status_code == 429:
+            return None
         resp.raise_for_status()
         try:
             parts = resp.json()["candidates"][0]["content"]["parts"]
         except (KeyError, IndexError):
             return None  # blocked or empty response
-        return clean_comment("".join(p.get("text", "") for p in parts))
+        text = clean_comment("".join(p.get("text", "") for p in parts))
+        if text:
+            print(f"  (model: {model})")
+        return text
     return None
 
 
