@@ -101,6 +101,15 @@ def save_history(h):
     HISTORY_FILE.write_text(json.dumps(h, indent=2))
 
 
+def looks_valid(comment):
+    """Reject empty, tiny, bracketed or error-like text before it can be posted."""
+    if not comment or len(comment) < 20 or len(comment) > 600:
+        return False
+    low = comment.lower()
+    bad = ("[placeholder]", "api key", "error", "as an ai", "i cannot", "i can't", "quota", "rate limit")
+    return not comment.startswith("[") and not any(b in low for b in bad)
+
+
 def clean_comment(text):
     text = text.replace("\u2014", ", ").replace("\u2013", ", ").replace(" - ", ", ")
     text = re.sub(r"@[\w.-]+[,:]?\s*", "", text)  # safety net: no @mentions
@@ -162,6 +171,8 @@ def generate_comment(post):
     author = post["author"]
 
     if not GEMINI_KEY:
+        if not DRY_RUN:
+            return None  # never post placeholder text
         return f"[placeholder] set GEMINI_API_KEY to generate a real comment about \"{title}\"."
 
     payload = {
@@ -199,16 +210,23 @@ def generate_comment(post):
 
 
 # ---------- live actions ----------
-def vote_and_comment(post, comment):
+def get_hive():
     from beem import Hive
-    from beem.comment import Comment
+    return Hive(keys=[POSTING_KEY], node=[API])
 
-    hive = Hive(keys=[POSTING_KEY], node=[API])
+
+def post_comment(hive, post, comment):
     ident = f"@{post['author']}/{post['permlink']}"
-    Comment(ident, blockchain_instance=hive).upvote(VOTE_WEIGHT, voter=ACCOUNT)
-    permlink = "re-" + post["author"].replace(".", "") + "-" + datetime.now(timezone.utc).strftime("%Y%m%dt%H%M%Sz").lower()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dt%H%M%Sz").lower()
+    permlink = "re-" + post["author"].replace(".", "") + "-" + stamp
     hive.post(title="", body=comment, author=ACCOUNT,
               reply_identifier=ident, permlink=permlink)
+
+
+def cast_vote(hive, post):
+    from beem.comment import Comment
+    ident = f"@{post['author']}/{post['permlink']}"
+    Comment(ident, blockchain_instance=hive).upvote(VOTE_WEIGHT, voter=ACCOUNT)
 
 
 # ---------- main ----------
@@ -219,6 +237,8 @@ def main():
 
     if not DRY_RUN and not (ACCOUNT and POSTING_KEY):
         raise SystemExit("HIVE_ACCOUNT and HIVE_POSTING_KEY are required in live mode")
+    if not DRY_RUN and not GEMINI_KEY:
+        raise SystemExit("GEMINI_API_KEY is required in live mode")
 
     posts = fetch_recent_posts()
     print(f"scanned {len(posts)} new posts")
@@ -247,8 +267,8 @@ def main():
         except requests.RequestException as e:
             print(f"  skip {tag}: comment generation failed ({e})")
             continue
-        if not comment:
-            print(f"  skip {tag}: no comment generated (rate limit or empty)")
+        if not comment or (not DRY_RUN and not looks_valid(comment)):
+            print(f"  skip {tag}: no valid comment generated")
             continue
         print(f"\n  MATCH {tag}")
         print(f"  title: {post.get('title')}")
@@ -256,10 +276,20 @@ def main():
         print(f"  would comment: {comment}\n")
 
         if not DRY_RUN:
-            vote_and_comment(post, comment)
+            hive = get_hive()
+            try:
+                post_comment(hive, post, comment)
+            except Exception as e:
+                print(f"  comment failed, skipping this post ({type(e).__name__})")
+                continue
+            # record right after the comment so this author is never commented twice
             history[post["author"]] = now.strftime("%Y-%m-%dT%H:%M:%S")
             save_history(history)
-            time.sleep(20)  # Hive allows one comment every 3 seconds; stay well above it
+            try:
+                cast_vote(hive, post)
+            except Exception as e:
+                print(f"  vote failed ({type(e).__name__}), comment was posted")
+            time.sleep(20)
 
         done += 1
         if done >= MAX_PER_RUN or (not DRY_RUN and already + done >= MAX_PER_DAY):
