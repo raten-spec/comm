@@ -31,7 +31,7 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry_run || vars.DRY_RUN || 'true' }}
           HIVE_ACCOUNT: ${{ secrets.HIVE_ACCOUNT }}
           HIVE_POSTING_KEY: ${{ secrets.HIVE_POSTING_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python bot.py
 
       - name: Save history
