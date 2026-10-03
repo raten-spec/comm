@@ -1,0 +1,42 @@
+name: hive-bot
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Simulation only (true) or live (false)"
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          # scheduled runs stay in simulation until you set the repo variable DRY_RUN=false
+          DRY_RUN: ${{ github.event.inputs.dry_run || vars.DRY_RUN || 'true' }}
+          HIVE_ACCOUNT: ${{ secrets.HIVE_ACCOUNT }}
+          HIVE_POSTING_KEY: ${{ secrets.HIVE_POSTING_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python bot.py
+
+      - name: Save history
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add history.json || true
+          git diff --cached --quiet || (git commit -m "update history" && git push)
