@@ -78,9 +78,27 @@ def clean_comment(text):
 
 # ---------- scanning ----------
 def fetch_recent_posts():
-    posts = rpc("bridge.get_ranked_posts",
-                {"sort": "created", "tag": "", "limit": SCAN_LIMIT, "observer": ""})
-    return posts
+    """bridge.get_ranked_posts allows max 20 per call, so paginate."""
+    now = datetime.now(timezone.utc)
+    posts = []
+    start_author, start_permlink = "", ""
+    while len(posts) < SCAN_LIMIT:
+        params = {"sort": "created", "tag": "", "limit": 20, "observer": ""}
+        if start_author:
+            params["start_author"] = start_author
+            params["start_permlink"] = start_permlink
+        page = rpc("bridge.get_ranked_posts", params)
+        if start_author and page:
+            page = page[1:]  # first item repeats the previous page's last post
+        if not page:
+            break
+        posts.extend(page)
+        last = page[-1]
+        start_author, start_permlink = last["author"], last["permlink"]
+        if now - parse_time(last["created"]) > MAX_POST_AGE:
+            break  # everything after this is older than 24h
+        time.sleep(0.3)
+    return posts[:SCAN_LIMIT]
 
 
 def has_beneficiary(post):
