@@ -36,7 +36,9 @@ MODELS = [m for m in [
 ] if m]
 VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "20"))      # percent
 MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "3"))
-SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "50"))
+SCAN_LIMIT = int(os.getenv("SCAN_LIMIT", "300"))
+# simulation only: skip the beneficiary filter to preview generated comments
+TEST_ANY = DRY_RUN and os.getenv("TEST_ANY", "false").lower() == "true"
 
 SYSTEM_PROMPT = """You write short comments on Hive blog posts.
 Rules:
@@ -118,7 +120,7 @@ def eligible(post, history, now):
     created = parse_time(post["created"])
     if now - created > MAX_POST_AGE:
         return False, "older than 24h"
-    if not has_beneficiary(post):
+    if not TEST_ANY and not has_beneficiary(post):
         return False, "no commentrewarder beneficiary"
     author = post["author"]
     last = history.get(author)
@@ -198,11 +200,15 @@ def main():
     print(f"scanned {len(posts)} new posts")
 
     done = 0
+    no_benef = 0
     for post in posts:
         ok, reason = eligible(post, history, now)
         tag = f"@{post['author']}/{post['permlink']}"
         if not ok:
-            print(f"  skip {tag}: {reason}")
+            if reason != "no commentrewarder beneficiary":
+                print(f"  skip {tag}: {reason}")
+            else:
+                no_benef += 1
             continue
 
         try:
@@ -228,7 +234,8 @@ def main():
         if done >= MAX_PER_RUN:
             break
 
-    print(f"\nfinished: {done} action(s) {'simulated' if DRY_RUN else 'executed'}")
+    print(f"\n{no_benef} posts skipped (no commentrewarder beneficiary)")
+    print(f"finished: {done} action(s) {'simulated' if DRY_RUN else 'executed'}")
 
 
 if __name__ == "__main__":
