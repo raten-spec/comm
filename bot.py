@@ -14,6 +14,7 @@ import requests
 API = "https://api.hive.blog"
 BENEFICIARY = os.getenv("BENEFICIARY", "").strip().lstrip("@").lower()
 MAX_POST_AGE = timedelta(hours=24)
+MIN_POST_AGE = timedelta(minutes=30)
 AUTHOR_COOLDOWN = timedelta(days=3)
 HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "history.json"))
 
@@ -149,6 +150,8 @@ def eligible(post, history, now):
     created = parse_time(post["created"])
     if now - created > MAX_POST_AGE:
         return False, "older than 24h"
+    if now - created < MIN_POST_AGE:
+        return False, "younger than 30 min"
     if not TEST_ANY and not has_beneficiary(post):
         return False, "filtered"
     author = post["author"]
