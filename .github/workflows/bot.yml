@@ -37,6 +37,7 @@ jobs:
           # scheduled runs stay in simulation until you set the repo variable DRY_RUN=false
           DRY_RUN: ${{ github.event.inputs.dry_run || vars.DRY_RUN || 'true' }}
           TEST_ANY: ${{ github.event.inputs.test_any || 'false' }}
+          APP_NAME: ${{ vars.APP_NAME }}
           VOTE_WEIGHT: ${{ vars.VOTE_WEIGHT || '100' }}
           MAX_PER_RUN: ${{ vars.MAX_PER_RUN || '1' }}
           MAX_PER_DAY: ${{ vars.MAX_PER_DAY || '10' }}
