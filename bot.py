@@ -30,6 +30,7 @@ MODELS = [m for m in [
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
 ] if m]
+APP_NAME = os.getenv("APP_NAME", "").strip() or "hive/1.0"  # shown as "via ..." on frontends
 VOTE_WEIGHT = int(os.getenv("VOTE_WEIGHT", "100"))      # percent
 MAX_PER_RUN = int(os.getenv("MAX_PER_RUN", "1"))
 MAX_PER_DAY = int(os.getenv("MAX_PER_DAY", "10"))  # UTC day, keeps voting power healthy
@@ -221,7 +222,7 @@ def post_comment(hive, post, comment):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dt%H%M%Sz").lower()
     permlink = "re-" + post["author"].replace(".", "") + "-" + stamp
     hive.post(title="", body=comment, author=ACCOUNT,
-              reply_identifier=ident, permlink=permlink)
+              reply_identifier=ident, permlink=permlink, app=APP_NAME)
 
 
 def cast_vote(hive, post):
